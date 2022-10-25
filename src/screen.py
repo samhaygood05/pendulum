@@ -17,7 +17,10 @@ class Screen:
                     pygame.draw.line(self.screen, node.connector_color(), (node.parent.position * self.scale).coords(), (node.position * self.scale).coords())
                 pygame.draw.circle(self.screen, node.color, (node.position * self.scale).coords(), 5)
                 if draw_forces:
-                    pygame.draw.line(self.screen, (255, 0, 0), (node.position * self.scale).coords(), ((node.position * self.scale) + node.net_force()).coords())
+                    if node.parent_connector.connector_type == 'spring':
+                        pygame.draw.line(self.screen, (255, 0, 0), (node.position * self.scale).coords(), ((node.position * self.scale) + node.net_force()).coords())
+                    else:
+                        pygame.draw.line(self.screen, (255, 0, 0), (node.position * self.scale).coords(), ((node.position * self.scale) - node.parent_direction().normal() * node.net_force().y).coords())
             pygame.display.flip()
 
     def update(self, draw_forces=False):
@@ -35,10 +38,13 @@ class Screen:
 
 
 if __name__ == '__main__':
-    system1 = PhysicsSystem(0.01)
-    system1.root_node(Vector(9, -7), (255, 0, 0))
-    system1.append_node(PhysicsNode(Vector(8, -8), 1, Vector(0, 0)), system1.nodes[0], Connector(1, 10, 'spring'))
-    system1.append_node(PhysicsNode(Vector(9, -8), 1, Vector(0, 0)), system1.nodes[1], Connector(1, 10, 'spring'))
-    screen = Screen([system1], 50)
+    system = PhysicsSystem(0.001, 0)
+    system.root_node(Vector(7, -1))
+    system.append_node(PhysicsNode(Vector(8, -1), 1, Vector(0, 0)), system.nodes[0], Connector(1, 200))
+    system.append_node(PhysicsNode(Vector(9, -1), 1, Vector(0, 0)), system.nodes[1], Connector(1, 20, 'spring'))
+
+    system.repair_positions()
+    system.get_initial_conditions()
+    screen = Screen([system], 50)
     screen.run(True)
 

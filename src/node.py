@@ -17,6 +17,12 @@ class Vector:
         self.x = x
         self.y = y
 
+    def normal(self):
+        return Vector(-self.y, self.x)
+
+    def rotate(self, angle):
+        return Vector(self.x * cos(angle) - self.y * sin(angle), self.x * sin(angle) + self.y * cos(angle))
+
     def __add__(self, other):
         return Vector(self.x + other.x, self.y + other.y)
 
@@ -49,10 +55,15 @@ class Vector:
 
 
 class Node:
-    def __init__(self, mass, movable=True, color=(255, 255, 255)):
+    def __init__(self, mass, movable=True, color=None):
+        if color is None and movable:
+            self.color = (255, 255, 255)
+        elif color is None and not movable:
+            self.color = (255, 0, 0)
+        else:
+            self.color = color
         self.mass = mass
         self.movable = movable
-        self.color = color
         self.parent = None
         self.parent_connector = Connector(1, 0)
         self.children = []
@@ -69,7 +80,7 @@ class Node:
 
 
 class PhysicsNode(Node):
-    def __init__(self, position, mass, velocity=Vector(0, 0), movable=True, color=(255, 255, 255)):
+    def __init__(self, position, mass, velocity=Vector(0, 0), movable=True, color=None):
         super().__init__(mass, movable, color)
         self.position = position
         self.velocity = velocity
@@ -87,7 +98,7 @@ class PhysicsNode(Node):
         if self.parent is None:
             return Vector(0, 0)
         else:
-            return (self.parent.position - self.position).normalize()
+            return self.parent_disp().normalize()
 
     def parent_disp(self):
         if self.parent is None:
@@ -95,19 +106,32 @@ class PhysicsNode(Node):
         else:
             return self.parent.position - self.position
 
-    def net_force(self):
-        return self.weight() + self.parent_force() + self.child_force()
+    def repair_position(self):
+        if self.parent is not None and self.parent_connector.connector_type == 'rigid':
+            self.position = self.parent.position - self.parent_direction() * self.parent_connector.length
 
-    def update_velocity(self, dt):
+    def net_force(self):
+        net_force = self.weight() + self.child_force() + self.parent_force()
+        if self.parent_connector.connector_type == 'rigid':
+            return Vector(0, net_force.dot(-self.parent_direction().normal()) * sqrt(abs(net_force.dot(-self.parent_direction().normal()))))
+        else:
+            return net_force
+
+    def update_velocity(self, dt, resistance=0):
         if self.movable:
+            if self.parent_connector.connector_type == 'rigid':
+                self.velocity += self.net_force() * dt / self.mass
             self.velocity += self.net_force() / self.mass * dt
+            self.velocity -= self.velocity * resistance * dt
 
     def update_position(self, dt):
-        dx = Vector(0, 0)
         if self.movable:
-            dx = self.velocity * dt
-            self.position += dx
-        return dx
+            if self.parent_connector.connector_type == 'rigid':
+                angular_velocity = self.velocity.y / self.parent_connector.length
+                self.position = -self.parent_disp().rotate(angular_velocity * dt) + self.parent.position
+                self.repair_position()
+            else:
+                self.position += self.velocity
 
     def weight(self):
         return Vector(0, -self.mass * g)
@@ -124,7 +148,8 @@ class PhysicsNode(Node):
         elif self.parent_connector.connector_type == 'rigid':
             net_child_force = Vector(0, 0)
             if self.children:
-                net_child_force = sum([child.net_force() for child in self.children])
+                for child in self.children:
+                    net_child_force += child.net_force()
             return self.parent_direction() * (net_child_force.dot(self.parent_direction()) - self.weight().dot(self.parent_direction()))
         elif self.parent_connector.connector_type == 'spring':
             return (-self.parent_direction() * self.parent_connector.length + self.parent_disp()) * self.parent_connector.k
@@ -133,12 +158,12 @@ class PhysicsNode(Node):
         if self.parent_connector.connector_type == 'spring':
             vec_disp = self.parent_direction() * self.parent_connector.length + self.parent_disp()
             force = self.parent_connector.k * vec_disp.dot(self.parent_direction())
-            if force < -10:
+            if force < 0:
                 norm_factor = 0
-            elif force > 10:
-                norm_factor = 1
             else:
-                norm_factor = (force + 10) / 20
+                norm_factor = 1
+            # else:
+            #     norm_factor = (force + 10) / 20
             return 255 * norm_factor, 255 * (1 - norm_factor), 0
         else:
             return 255, 255, 255
@@ -174,11 +199,12 @@ class System:
 
 
 class PhysicsSystem(System):
-    def __init__(self, dt):
+    def __init__(self, dt, resistance=0):
         super().__init__()
         self.target = None
         self.last_position = None
         self.initial_conditions = None
+        self.resistance = resistance
         self.dt = dt
         self.steps = 0
 
@@ -191,7 +217,7 @@ class PhysicsSystem(System):
         new_system.steps = self.steps
         return new_system
 
-    def root_node(self, position=Vector(0, 0), color=(255, 255, 255)):
+    def root_node(self, position=Vector(0, 0), color=None):
         self.append_node(PhysicsNode(position, 1, Vector(0, 0), False, color))
 
     def elapsed_time(self):
@@ -203,13 +229,18 @@ class PhysicsSystem(System):
     def set_target(self, target):
         self.target = target
 
+    def repair_positions(self):
+        for node in self.nodes:
+            node.repair_position()
+
     def update(self):
         dx = Vector(0, 0)
         for i in range(self.max_depth(), -1, -1):
             for node in self.layer(i):
-                node.update_velocity(self.dt)
+                node.update_velocity(self.dt, self.resistance)
         for node in self.nodes:
             node.update_position(self.dt)
+            # node.repair_position()
         self.steps += 1
 
     def strip_physics(self):
